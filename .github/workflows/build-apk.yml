@@ -17,51 +17,44 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Use preinstalled Android SDK
+      - name: Find and unpack Khadamati project
         shell: bash
         run: |
           set -e
-          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          export ANDROID_SDK_ROOT="$ANDROID_HOME"
-          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
-          echo "Android SDK: $ANDROID_HOME"
-          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || test -x "$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
-
-      - name: Install required Android SDK packages
-        shell: bash
-        run: |
-          set -e
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+          ZIP="$(find . -type f -iname '*.zip' -not -path './.git/*' | head -n 1)"
+          if [ -z "$ZIP" ]; then
+            echo "No project ZIP found."
+            exit 1
           fi
-          yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "Using ZIP: $ZIP"
+          mkdir -p _khadamati_project
+          unzip -q "$ZIP" -d _khadamati_project
 
-      - name: Prepare Gradle
-        shell: bash
-        run: |
-          if [ -f ./gradlew ]; then
-            chmod +x ./gradlew
-          else
-            echo "ERROR: gradlew was not found in the repository root."
-            find . -maxdepth 3 -type f | sort | head -200
+          GRADLEW="$(find "$GITHUB_WORKSPACE/_khadamati_project" -type f -name gradlew | head -n 1)"
+          if [ -z "$GRADLEW" ]; then
+            echo "gradlew was not found after extracting the project."
+            find "$GITHUB_WORKSPACE/_khadamati_project" -maxdepth 3 -type f | head -n 100
             exit 1
           fi
 
+          PROJECT_DIR="$(dirname "$GRADLEW")"
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project directory: $PROJECT_DIR"
+
+      - name: Make Gradle executable
+        run: chmod +x "$PROJECT_DIR/gradlew"
+
       - name: Build release APK
+        working-directory: ${{ env.PROJECT_DIR }}
         run: ./gradlew assembleRelease --stacktrace --no-daemon
 
       - name: Show APK files
-        run: find . -type f -name "*.apk" -print
+        run: |
+          find "$PROJECT_DIR/app/build/outputs/apk" -type f -name '*.apk' -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: khadamati-apk
-          path: app/build/outputs/apk/release/*.apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
