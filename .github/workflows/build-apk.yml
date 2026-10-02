@@ -17,23 +17,47 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK packages
+      - name: Use preinstalled Android SDK
+        shell: bash
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          set -e
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/emulator" >> "$GITHUB_PATH"
+          echo "Android SDK: $ANDROID_HOME"
+          test -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" || test -x "$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
 
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          set -e
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+          fi
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Prepare Gradle
+        shell: bash
+        run: |
+          if [ -f ./gradlew ]; then
+            chmod +x ./gradlew
+          else
+            echo "ERROR: gradlew was not found in the repository root."
+            find . -maxdepth 3 -type f | sort | head -200
+            exit 1
+          fi
 
       - name: Build release APK
-        run: ./gradlew assembleRelease --stacktrace
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
 
-      - name: Find APK
-        run: |
-          echo "APK files found:"
-          find . -type f -name "*.apk" -print
+      - name: Show APK files
+        run: find . -type f -name "*.apk" -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
